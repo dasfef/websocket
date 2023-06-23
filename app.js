@@ -7,10 +7,10 @@ const WebSocket = require('ws');
 const wss = new WebSocket.Server({ server });
 
 // public 디렉토리 내의 정적 파일 제공
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static('/public'));
 
 app.get('/', function(req, res){
-    res.sendFile(path.join(__dirname, 'public/index.html'));
+    res.sendFile('/public/index.html');
 });
 
 wss.on('connection', function connection(ws) {
@@ -27,6 +27,6 @@ wss.on('error', (error) => {
     console.log('WebSocket error: ${error}');
 });
 
-server.listen(8800, function() {
-    console.log('App and WebSocket are listening on port 8800');
+server.listen(8999, function() {
+    console.log('App and WebSocket are listening on port 8999');
 });
