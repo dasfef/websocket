@@ -2,26 +2,22 @@ const express = require('express');
 const app = express();
 const path = require('path');
 const http = require('http');
-const server = http.createServer(app);
 const WebSocket = require('ws');
-const wss = new WebSocket.Server({ server });
 
 // public 디렉토리 내의 정적 파일 제공
-app.use(express.static('/public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/', function(req, res){
-    res.sendFile('/public/index.html');
+    // res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.send('Hello World');
 });
 
-wss.on('connection', function connection(ws) {
-    ws.on('message', function incoming(data) {
-        wss.clients.forEach(function each(client){
-            if(client.readyState === WebSocket.OPEN) {
-                client.send(data);
-            }
-        })
-    })
-})
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+// app.listen(8999, function() {
+//     console.log('Example app listening on port 8999');
+// });
 
 wss.on('error', (error) => {
     console.log('WebSocket error: ${error}');
