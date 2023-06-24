@@ -1,25 +1,48 @@
 <!DOCTYPE html>
 <html>
+<head>
+    <title>YOLO Object Detection PROJECT</title>
+    <style>
+        #streaming-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+        }
+        #streaming, #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+</head>
 <body>
-    <img id="streaming"/>
+
+    <div id="streaming-container">
+        <img id="streaming" width="640" height="480"/>
+        <canvas id="canvas" width="640" height="480"></canvas>
+    </div>
+
     <script>
-        var ws = new WebSocket('ws://localhost:8999/index.html');
+        var ws = new WebSocket('ws://192.168.0.46:8800');
 
         ws.binaryType = 'arraybuffer';                                  // 받는 데터 형식을 arraybuffer로 설정
 
         var currentBlobUrl = null;                                      // 현재 Blob URL 저장
-        var streamingImage = document.querySelector('#streaming');
+        var streamingImage = document.querySelector('#streaming');      // jQuery select id: streaming 
 
         ws.onmessage = function (event){
             // 기존에 생성된 Blob URL이 있다면 해제
             if(currentBlobUrl) {
-                URL.revokeObjectURL(currentBlobUrl);
+                URL.revokeObjectURL(currentBlobUrl);                    
             }
             
             // 서버로부터 받은 데이터를 blob 객체로 변환, 이를 이미지로 표시
             var blob = new Blob([event.data], {type: 'image/jpeg'});
-            currentBlobUrl = URL.createObjectURL(blob);
+            currentBlobUrl = URL.createObjectURL(blob);                 // Blob 객체로 나타내기
             streamingImage.src = currentBlobUrl;
+            detectObjects();
         };
 
         ws.onopen = function(event) {
@@ -45,7 +68,48 @@
             if(currentBlobUrl) {
                 URL.revokeObjectURL(currentBlobUrl);
             }
-        })
+        });
+
+        // Load the model
+        let model;
+        async function loadModel() {
+            model = await cocoSsd.load();
+        }
+        loadModel();
+
+        // Perform object detection
+        async function detectObjects() {
+            if (!model) {
+                console.log('Waiting for the model to load...');
+                return;
+            }
+            const canvas = document.getElementById('canvas');
+            const context = canvas.getContext('2d');
+            const image = document.getElementById('streaming');
+
+            // wait until image is loaded
+            image.onload = async () => {
+                const results = await model.detect(image);
+
+                // Clear the canvas
+                context.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Draw the results
+                for (const result of results) {
+                    context.beginPath();
+                    context.rect(result.bbox[0], result.bbox[1], result.bbox[2], result.bbox[3]);
+                    context.lineWidth = 2;
+                    context.strokeStyle = 'red';
+                    context.fillStyle = 'red';
+                    context.stroke();
+                    context.fillText(
+                        result.class + ': ' + Math.round(result.score * 100) + '%',
+                        result.bbox[0],
+                        result.bbox[1] > 10 ? result.bbox[1] - 5 : 10
+                    );
+                }
+            };
+        }
     </script>
 </body>
 </html>
