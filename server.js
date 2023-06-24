@@ -1,69 +1,28 @@
-const WebSocket = require('ws');
+const express = require('express');
 const http = require('http');
+const socketIO = require('socket.io');
 
-const server = http.createServer();
-const wss = new WebSocket.Server({ server });
+const app = express();
+const server = http.createServer(app);
+const io = socketIO(server);
 
-// server.maxConnections = 10;                                         // 동시 연결 수 제한
-const maxClients = 5;
-let connectedClients = 0;
+io.on('connection', (socket) => {
+  console.log(socket.id + ' user connected');
 
-// let connectedClients = [];                                          // 연결된 클라이언트를 관리하는 배열
-wss.on('connection', (ws) => {
-  if(connectedClients < maxClients){
-    connectedClients++;
+  socket.on('disconnect', () =>{
+    console.log(socket.id + ' user disconnected');
+  });
 
-    ws.on('message', (message) => {
-      // 메시지를 비동기 처리하는 부분
-      broadcastMessage(message, ws)
-        .catch((err) => {
-          console.error(err);
-        });
-    });
-
-    ws.on('close', () => {
-      console.log('Client disconnected');
-      connectedClients--;
-    });
-  } else{
-    ws.close(1001, 'Too many connections');
-  };
+  socket.on('message', (msg) => {
+    console.log('message: ' + msg);
+    io.emit('message', msg);
+  });
 });
 
-async function broadcastMessage(message, ws) {
-  return new Promise((resolve, reject) => {
-    try{
-      // 클라이언트로부터 받은 메세지를 다른 모든 클라이언트에게 전송
-      connectedClients.forEach(client => {
-        if(client !== ws && client.readyState === WebSocket.OPEN){
-          client.send(message);
-        }
-      });
-      resolve();
-    }catch (err){
-      reject(err);
-    }
-  });
-}
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/index.html');
+});
 
-//   console.log('Client connected');
-//   connectedClients.push(ws);                                        // 새로 연결된 클라이언트를 배열에 추가
-
-//   ws.on('message', (message) => {
-//     // 클라이언트로부터 받은 메세지를 다른 모든 클라이언트에게 전송
-//     connectedClients.forEach(client => {
-//         if(client !== ws && client.readyState === WebSocket.OPEN){
-//             client.send(message);
-//         }
-//     })
-//   });
-
-//   ws.on('close', () => {
-//     console.log('Client disconnected');
-//     connectedClients = connectedClients.filter(client => client !== ws);
-//   });
-// });
-
-server.listen(8999, () => {
-    console.log('Server started on Port 8999');
+server.listen(8989, () => {
+  console.log('listening on *:8989');
 });
