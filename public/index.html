@@ -14,6 +14,12 @@
             left: 0;
             display: inline-block;
         }
+        #capture{
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 10;
+        }
         @media screen and (min-width: 992px){
         #streaming-container {
             text-align: center;
@@ -38,15 +44,29 @@
     <div id="streaming-container">
         <img id="streaming" width="640" height="480"/>
         <canvas id="canvas" width="640" height="480"></canvas>
+        <button id="capture">Start Capture</button>
     </div>
 
     <script>
         var ws = new WebSocket('ws://woong.ddns.net:8800');
 
-        ws.binaryType = 'arraybuffer';                                  // 받는 데터 형식을 arraybuffer로 설정
-
         var currentBlobUrl = null;                                      // 현재 Blob URL 저장
         var streamingImage = document.querySelector('#streaming');      // jQuery select id: streaming 
+        let captureBtn = document.querySelector('#capture');            // captureBtn 변수 선언
+        let captureFlag = false;                                        // captureBtn 토글 변수
+        
+        ws.binaryType = 'arraybuffer';                                  // 받는 데이터 형식을 arraybuffer로 설정
+
+        // 캡쳐 버튼 토글 효과 및 웹소켓 특정 메시지 전송
+        captureBtn.addEventListener('click', () => {
+            captureFlag = !captureFlag;                                 // 토글 형식 변환
+            captureBtn.textContent = captureFlag ? 'Stop Capture' : 'Start Capture';        // 캡쳐 버튼 텍스트 설정
+            console.log(`Capture Activate: ${captureFlag}`);
+
+            let message = captureFlag ? 'start' : 'stop';                    // 웹소켓 전송(captureFlag True -> START / captureFlag False -> STOP)
+            ws.send(`${message}`);
+            console.log(`Sending CaptureFlag Data: ${message}`);
+        });
 
         ws.onmessage = function (event){
             // 기존에 생성된 Blob URL이 있다면 해제
@@ -86,14 +106,14 @@
             }
         });
 
-        // Load the model
+        // Tensorflow.js 모델 호출
         let model;
         async function loadModel() {
             model = await cocoSsd.load();
         }
         loadModel();
 
-        // Perform object detection
+        // 인식된 객체 바운딩박스 표현
         async function detectObjects() {
             if (!model) {
                 console.log('Waiting for the model to load...');
