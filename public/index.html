@@ -12,6 +12,22 @@
             position: absolute;
             top: 0;
             left: 0;
+            display: inline-block;
+        }
+        @media screen and (min-width: 992px){
+        #streaming-container {
+            text-align: center;
+            max-width: 100%;
+            height: auto;
+            }
+        }
+
+        @media screen and (min-width: 768px){
+        #streaming, #canvas {
+            text-align: center;
+            max-width: 100%;
+            height: auto;
+            }
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
@@ -25,7 +41,7 @@
     </div>
 
     <script>
-        var ws = new WebSocket('ws://192.168.0.46:8800');
+        var ws = new WebSocket('ws://woong.ddns.net:8800');
 
         ws.binaryType = 'arraybuffer';                                  // 받는 데터 형식을 arraybuffer로 설정
 
