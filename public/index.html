@@ -1,14 +1,27 @@
 <!DOCTYPE html>
 <html>
-<head>
-    <title>YOLO Object Detection PROJECT</title>
+    <head>
+        <title>YOLO Object Detection PROJECT</title>
+        <!-- <script type="module" src="https://cdn.jsdelivr.net/npm/kalmanjs@1.1.0/lib/kalman.min.js"></script> -->
+        <!-- <script src="../dist/kalman-filter.min.js"></script> -->
+        <!-- <script src="https://cdn.jsdelivr.net/npm/onnxjs/dist/onnx.min.js"></script> -->
+        <!-- <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script> -->
+        <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/ndarray/1.0.19/ndarray.js"></script> -->
+        <!-- <script src="https://cdn.jsdelivr.net/npm/ndarray-ops@1.2.2/ndarray-ops.min.js"></script> -->
+        <script type="commonjs" src="https://cdn.jsdelivr.net/npm/kalman-filter@2.3.0/index.min.js"></script>
+    </head>
+    <!-- <script src="../dist/kalman-filter.js"></script> -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script> -->
+    <script src="https://cdn.roboflow.com/0.2.26/roboflow.js"></script>
+<body>
     <style>
         #streaming-container {
             position: relative;
             width: 640px;
             height: 480px;
         }
-        #streaming, #canvas {
+        #streaming, #canvas, #canvas_moving {
             position: absolute;
             top: 0;
             left: 0;
@@ -18,6 +31,20 @@
             position: absolute;
             top: 10px;
             right: 10px;
+            z-index: 10;
+        }
+
+        #reset {
+            position: absolute;
+            top: 10px;
+            right: 110px;
+            z-index: 10;
+        }
+
+        #modelBtn {
+            position: absolute;
+            top: 10px;
+            right: 165px;
             z-index: 10;
         }
         @media screen and (min-width: 992px){
@@ -36,59 +63,133 @@
             }
         }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-</head>
-<body>
 
     <div id="streaming-container">
-        <img id="streaming" width="640" height="480"/>
+        <img id="streaming" />
         <canvas id="canvas" width="640" height="480"></canvas>
+        <canvas id="canvas_moving" width="640" height="480"></canvas>
+        <button id="modelBtn">OFF</button>
+        <button id="reset">Reset</button>
         <button id="capture">Start Capture</button>
     </div>
 
-    <script>
-        var ws = new WebSocket('ws://woong.ddns.net:8800');
+    <script type="text/javascript">
+        var ws = new WebSocket('ws://192.168.0.8:8800');               // IP 변경란
+        KalmanFilter = {R:0.1, Q:0.3};
+        // const kalman = new KalmanFilter({R:0.1, Q:0.3});
+        console.log(window.KalmanFilter);
+        // let KalmanFilter;
+        // let kalman = new KalmanFilter({
+        //     R: 0.01,
+        //     Q: 2,
+        //     A: 1.1,
+        // });
 
+        const imgsz = 416;                                              // 모델 설정 사이즈
+        const rawWidth = 640;
+        const rawHeight = 480;
+        const font = "16px sans-serif";
+        
         var currentBlobUrl = null;                                      // 현재 Blob URL 저장
         var streamingImage = document.querySelector('#streaming');      // jQuery select id: streaming 
+        var canvas = document.querySelector('#canvas');
+        var canvas_moving = document.querySelector('#canvas_moving');
         let captureBtn = document.querySelector('#capture');            // captureBtn 변수 선언
         let captureFlag = false;                                        // captureBtn 토글 변수
-        
-        ws.binaryType = 'arraybuffer';                                  // 받는 데이터 형식을 arraybuffer로 설정
+        let resetBtn = document.querySelector('#reset');
+        let modelBtn = document.querySelector('#modelBtn');
+        let model;                                                      // model 선언
+        let objectDataArray = [];
+        let time = 0;
+        let setTime = 10000;
+        let newData = [];
+        let oldData = [];
+        let detectFlag = false;
 
-        // 캡쳐 버튼 토글 효과 및 웹소켓 특정 메시지 전송
+        // let prevFrameObjects = [];                                      // 이전 프레임 객체 배열
+        // let oldObjects = [];                                            // 탐지된 이전 객체 배열
+        let maxDistance = 20;                                           // 객체 최대 좌표 움직임 설정
+        let objectID = 1;                                               // 객체 최초 아이디 부여
+
+        const context = canvas.getContext('2d');
+        const ctx = canvas_moving.getContext('2d');
+
+        ws.binaryType = 'arraybuffer';                                  // 받는 데이터 형식을 arraybuffer로 설정
+        
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas_moving.width, canvas_moving.height);
+            time = 0;
+        }
+
+        modelBtn.addEventListener('click', () => {
+            if (detectFlag === false) {
+                detectFlag = true;
+                modelBtn.innerHTML = "ON";
+                // roboflow 모델 호출
+                roboflow.auth({
+                    publishable_key: "rf_rqWO6ZeCz4a86OTbpYGJ"
+                    // 예비 모델 : rf_E7odP49vKCtm8YisSlNe ===== 사용
+                    // 예비 모델2 : rf_XmOTBupz1IVgsWHVulgM ==== 사용
+                    // 예비 모델3 : rf_rqWO6ZeCz4a86OTbpYGJ ==== 사용중
+                    // 예비 모델4 : rf_2mHNHeM25n1IBcldJPQ4
+                }).load({
+                    model: "d-bugging",
+                    version: 2
+                }).then(function(m){
+                    model = m;
+                    console.log("Model has loaded!");
+                });
+
+            } else {
+                detectFlag = false;
+                modelBtn.innerHTML = "OFF";
+            }
+        })
+
+        //  *** 캡쳐 버튼 토글 효과 및 웹소켓 특정 메시지 전송 ***
         captureBtn.addEventListener('click', () => {
             captureFlag = !captureFlag;                                 // 토글 형식 변환
             captureBtn.textContent = captureFlag ? 'Stop Capture' : 'Start Capture';        // 캡쳐 버튼 텍스트 설정
             console.log(`Capture Activate: ${captureFlag}`);
-
-            let message = captureFlag ? 'start' : 'stop';                    // 웹소켓 전송(captureFlag True -> START / captureFlag False -> STOP)
+            
+            let message = captureFlag ? 'start' : 'stop';               // 웹소켓 전송(captureFlag True -> START / captureFlag False -> STOP)
             ws.send(`${message}`);
             console.log(`Sending CaptureFlag Data: ${message}`);
         });
 
-        ws.onmessage = function (event){
-            // 기존에 생성된 Blob URL이 있다면 해제
+        resetBtn.addEventListener('click', () => {
+            clearCanvas();
+            time = 0;
+            console.log('Reset Button Clicked!');
+        })
+
+        // 서버에서 바이너리 데이터 받을때마다 실행
+        ws.onmessage = async function (event){
             if(currentBlobUrl) {
                 URL.revokeObjectURL(currentBlobUrl);                    
             }
-            
+                
             // 서버로부터 받은 데이터를 blob 객체로 변환, 이를 이미지로 표시
             var blob = new Blob([event.data], {type: 'image/jpeg'});
             currentBlobUrl = URL.createObjectURL(blob);                 // Blob 객체로 나타내기
             streamingImage.src = currentBlobUrl;
-            detectObjects();
-        };
 
+            if (detectFlag === true) {
+                detectObject();
+            }
+        };
+        
+        // 소켓 접속 성공시
         ws.onopen = function(event) {
             console.log('Connected to WebSocket server');
         };
-
+        
+        // 소켓 접속 오류시
         ws.onerror = function(error) {
             console.log('WebSocket error: ' + error);
         };
-
+        
+        // 소켓 접속 닫혔을시
         ws.onclose = function(event) {
             if(event.wasClean){
                 console.log('Connection closed clearly, code=${event.code} reason=${event.reason}');
@@ -96,7 +197,7 @@
                 console.log('Connection died');
             }
         };
-
+        
         window.addEventListener('beforeunload', function() {
             if(ws) {
                 ws.close();
@@ -106,46 +207,341 @@
             }
         });
 
-        // Tensorflow.js 모델 호출
-        let model;
-        async function loadModel() {
-            model = await cocoSsd.load();
-        }
-        loadModel();
+        // ***** 이전 프레임 객체 정보 저장 배열 *****
+        // 각 프레임에서 탐지된 객체의 정보를 받아 이전 프레임과 비교 후 일정 범위 안에 있는 것을 찾는다
+        function trackObjects(currentFrameObjects) {
 
-        // 인식된 객체 바운딩박스 표현
-        async function detectObjects() {
-            if (!model) {
-                console.log('Waiting for the model to load...');
+            for (let currObject of currentFrameObjects) {
+                let distance = null;
+                for (let prevObject of prevFrameObjects) {
+                    distance = Math.sqrt(
+                        Math.pow(currObject.x - prevObject.x, 2) + 
+                        Math.pow(currObject.y - prevObject.y, 2)
+                    );
+                }
+                if (distance <= maxDistance){
+                    // saveObjectToDatabase(currObject);
+                    prevFrameObjects = currentFrameObjects;
+                }
+                else {
+                    prevFrameObjects.push(currObject);
+                }
+            }
+        }
+
+        // 객체 추적을 위한 클래스
+        // class TrackedObject {
+        //     constructor(id, x, y) {
+        //         this.id = id;
+        //         this.x = x;
+        //         this.y = y;
+        //         this.filter = KalmanFilter;
+        //         this.state = initialState;
+        //     }
+
+        //     update(observation) {
+        //         this.state.x = this.filter.filter(observation.x);
+        //         this.state.y = this.filter.filter(observation.y);
+        //     }
+        // }
+
+        // class TrackedObject {
+        //     constructor(id, x, y){
+        //         this.id = id;
+        //         this.x = x;
+        //         this.y = y;
+        //     }
+
+        //     update(id, x, y) {
+        //         this.id = id;
+        //         this.x = x;
+        //         this.y = y;
+        //     }
+        // }
+        function saveObjectToDatabase(object) {
+            // MySQL 데이터 경유지 : 메인 서버 컴퓨터 php 접속 및 JSON 파일로 송신
+            fetch('http://175.205.128.40:9797/worm.php', {              
+                method: 'POST',
+                headers: {
+                            'Content-Type': 'application/json',
+                    },
+                body: JSON.stringify(objectDataArray),
+            })
+            .then(response => response.json())
+            .then(data => console.log(data))
+            .catch((error) => {
+                console.error('Error: ', error);
+            });
+        }
+
+        // 유클리디안 거리 계산법
+        function calDistance(a, b) {
+            const dx = a.x - b.x;
+            const dy = a.y - b.y;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        // 객체 탐지
+        async function detectObject() {
+            if(!model) {
+                console.log("Waiting for the model to load...");
                 return;
             }
-            const canvas = document.getElementById('canvas');
-            const context = canvas.getContext('2d');
+            // const canvas = document.getElementById('canvas');
             const image = document.getElementById('streaming');
+            var scale = 1;                                                      // 모델에서 탐지하는 객체 좌표와 스케일 맞추기
 
-            // wait until image is loaded
-            image.onload = async () => {
+            // image 가 로드 되었을 때 탐지 실행
+            image.onload = async() => {
                 const results = await model.detect(image);
-
-                // Clear the canvas
+                let objectDataArray = [];                                           // DB로 넘길 데이터 배열 생성
+                console.log('predictions: ', results);
                 context.clearRect(0, 0, canvas.width, canvas.height);
 
-                // Draw the results
-                for (const result of results) {
+                // let nextObjectID = 0;
+                // let trackedObjects = new TrackedObject();
+                // let newTrackedObject = new TrackedObject();
+                let ID = 0;
+
+                results.forEach(result => {
+                    // ***** 객체 탐지 바운딩박스 그리는 과정 *****
+                    console.log('Calculating...');
+                    // const scaleX = rawWidth / imgsz;
+                    // const scaleY = rawHeight / imgsz;
+                    // trackedObjects += trackedObjects(result);
+
+                    let x = result.bbox.x;
+                    let y = result.bbox.y;
+                    const width = result.bbox.width;
+                    const height = result.bbox.height;
+
+                    // resultX = new TrackedObject(x);
+                    // resultY = new TrackedObject(y);
+                    // nextObjectID = new TrackedObject(id);
+
+                    // let closestObject = null;
+                    // let closestDistance = Infinity;
+                    // for (let object of trackedObjects) {
+                    //     let dx = x - object.x;
+                    //     let dy = y - object.y;
+                    //     let distance = Math.sqrt(dx * dx + dy * dy);
+
+                    //     if (distance < closestDistance) {
+                    //         closestObject = object;
+                    //         closestDistance = distance;
+                    //     }
+                    // }
+
+                    // If the closest object is close enough, move it to the new position.
+                    // Otherwise, create a new object.
+                    // if (closestDistance < maxDistance) {
+                    //     closestObject.x = x;
+                    //     closestObject.y = y;
+                    // } else {
+                    //     newTrackedObject = {
+                    //         id: nextObjectID++,
+                    //         x: x,
+                    //         y: y
+                    //     };
+                    //     trackedObjects += newTrackedObject(result);
+                    // }
+
+                    x = (x - width / 2) / scale;
+                    y = (y - height / 2) / scale;
+
                     context.beginPath();
-                    context.rect(result.bbox[0], result.bbox[1], result.bbox[2], result.bbox[3]);
+                    context.rect(
+                        x,
+                        y,
+                        width,
+                        height
+                    );
                     context.lineWidth = 2;
-                    context.strokeStyle = 'red';
+                    context.strokeStyle = '#cc9933';
                     context.fillStyle = 'red';
                     context.stroke();
                     context.fillText(
-                        result.class + ': ' + Math.round(result.score * 100) + '%',
-                        result.bbox[0],
-                        result.bbox[1] > 10 ? result.bbox[1] - 5 : 10
+                        'ID: ' + ID + ' ' + result.class + ': ' + Math.round(result.confidence * 100) + '%',
+                        x,
+                        y > 10 ? y - 5 : 10
                     );
-                }
-            };
+                    ID++;
+
+                    ctx.beginPath();
+                    ctx.fillStyle = '#6666ff';
+                    ctx.arc(result.bbox.x, result.bbox.y, 1, 0, 2 * Math.PI);                               // x, y 좌표, 원의 반지름 : 5, 시작 각도 : 0, 종료 각도 : 360
+                    ctx.fill();
+                    time++;
+                    if(time > setTime) {
+                        clearCanvas();
+                        time = 0;
+                        console.log('Linear canvas has reset');
+                    }
+
+                    
+
+                    
+
+                    // ***** objectData MySQL DB 송신 과정 *****
+                    // const objectClass = result.class;                              // 클래스 정보 표기
+                    const objectClass = ID;
+                    const score = result.confidence;                               // 정확도 점수 표기
+
+                    const objectData = {                                            // objectData 배열 내 정보 생성
+                        objectClass: objectClass,
+                        score: score,
+                        bbox: {
+                            x: x,
+                            y: y,
+                            width: width,
+                            height: height
+                        }
+                    };
+                    objectDataArray.push(objectData);                               // 감지된 객체 정보 objectData 배열에 추가
+                    
+                    // // MySQL 데이터 경유지 : 메인 서버 컴퓨터 php 접속 및 JSON 파일로 송신
+                    fetch('http://175.205.128.40:9797/worm.php', {              
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                    },
+                        body: JSON.stringify(objectDataArray),
+                    })
+                    .then(response => {
+                        if(!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => console.log(data))
+                    .catch((error) => {
+                        console.error('Error: ', error);
+                    });
+                }); 
+
+                
+                // let objectDataArray = [];                                           // DB로 넘길 데이터 배열 생성
+                // for (let i=0; i<results.length; i++) {
+                    
+                //     const [x, y, width, height] = results[i].bbox;                     // 각 객체에 대한 bounding box 정보
+
+                //     const objectClass = results[i].class;                              // 클래스 정보 표기
+                //     const score = results[i].confidence;                               // 정확도 점수 표기
+
+                //     const objectData = {                                            // objectData 배열 내 정보 생성
+                //         objectClass: objectClass,
+                //         score: score,
+                //         bbox: {
+                //             x: x,
+                //             y: y,
+                //             width: width,
+                //             height: height
+                //         }
+                //     };
+                //     objectDataArray.push(objectData);                               // 감지된 객체 정보 objectData 배열에 추가
+                    
+                //     // MySQL 데이터 경유지 : 메인 서버 컴퓨터 php 접속 및 JSON 파일로 송신
+                //     fetch('http://175.205.128.40:9797/worm.php', {              
+                //         method: 'POST',
+                //         headers: {
+                //             'Content-Type': 'application/json',
+                //     },
+                //     body: JSON.stringify(objectDataArray),
+                //     })
+                //     .then(response => response.json())
+                //     .then(data => console.log(data))
+                //     .catch((error) => {
+                //         console.error('Error: ', error);
+                //     });
+                // }
+
+                // ***** 객체 추적 및 ID 부여 *****
+                    // 객체 ID 부여
+                    // oldObjects = new TrackedObject();
+                    // let trackedObjects = results.map(results => new TrackedObject(objectID++,{
+                    //     id: objectID,
+                    //     x: x,
+                    //     y: y
+                        
+                    // }));
+                    // console.log('trackedObjects: ', trackedObjects);
+                    // // trackObjects(trackedObjects);
+                    // for(let i=0; i<trackedObjects.length; i++) {
+                    //     oldObjects.update(trackedObjects[i]);
+                    // }
+                    // // oldObjects.push(trackObjects);
+
+                    // // 신규 객체 탐색
+                    // // let newObjects = [];
+                    // for (let oldObject of [...oldObjects]){
+                    //     let isNewDetection = true;
+                    //     for(let newObject of trackedObjects) {
+                    //         if(calDistance(newObject, oldObject) < maxDistance) {
+                    //             isNewDetection = false;
+                    //             break;
+                    //         }
+                    //         else if (isNewDetection) {
+                    //             oldObjects.push(newObject);
+                    //         }
+                    //     }
+
+                    //     // if(isNewDetection) {
+                    //     //     newObjects.push(newObject);
+                    //     // }
+                    // }
+                    // // oldObjects = oldObjects.push(newObjects);
+
+                    // // 신규 객체, 기존 객체 거리 계산 후 아이디 부여
+                    // for (let detection of oldObjects){
+                    //     let closestObject = new TrackedObject();
+                    //     let closestDistance = maxDistance;
+
+                    //     for(let trackedObject of trackedObjects){
+                    //         // let dx = detection.x - trackedObject.state.x;
+                    //         // let dy = detection.y - trackedObject.state.y;
+                    //         // let distance = Math.sqrt(dx*dx + dy*dy);
+                    //         let distance = calDistance(detection, trackedObject);
+
+                    //         // 기존 객체 탐지되었을 때
+                    //         if (distance < closestDistance) {
+                    //             closestObject = detection;
+                    //             closestDistance = distance;
+                    //         }
+                    //         // 신규 객체 탐지되었을 때
+                    //         else {
+                    //             closestObject.id = objectID++;
+                    //             closestObject.x = trackedObject.x;
+                    //             closestObject.y = trackedObject.y;
+
+                    //             oldObjects.push(closestObject);
+                    //         }
+                    //     }
+
+                    //     // 기존 객체 탐지되었을 때
+                    //     if(closestDistance <= maxDistance) {
+                    //         // closestObject.update(detection);
+                    //         closestObject.id = detection.id;
+                    //         oldObjects.update(closestObject);
+                    //     }
+                        
+                    //     else {
+                    //         // let newTrackedObject = new TrackedObject(objectID++, detection);
+                            
+                    //         // trackedObjects.push(newTrackedObject);
+                    //         // detection.objectID = newTrackedObject.id;
+                    //     }
+                    //     console.log('detection: ', detection);
+                    // }
+                    // oldObjects = trackedObjects;
+
+                    // for(let i=0; i<oldObjects.length; i++){
+                    //     console.log('object ID: ', oldObjects[i].objectID);
+                    // }
+                    // const [x, y, width, height] = result.bbox;                     // 각 객체에 대한 bounding box 정보
         }
+    }
     </script>
 </body>
 </html>
+
+

@@ -3,10 +3,15 @@ const express = require('express');
 const http = require('http');
 const { connected } = require('process');
 const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
+
+// CORS 정책 허가
+var cors = require('cors');
+app.use(cors());
 
 const maxClients = 10;                                                  // 동시 연결 수 제한 : 10
 let connectedClients = [];                                              // 클라이언트 리스트
@@ -21,9 +26,16 @@ function generateUniqueID() {
 }
 
 // 웹소켓 접속시 index.html 파일 전송
-app.use("/", function(req, res){
-  res.sendFile(__dirname + '/public/index.html');                       
-});
+// app.use("/", function(req, res){
+//   res.sendFile(__dirname + '/public/index.html');                       
+// });
+
+// app.use('/models', express.static(path.join(__dirname + '/bestpt/best.onnx')));
+app.use('/css', express.static('public'));
+app.get('*', (req, res) => {
+  res.sendFile(__dirname + '/public/index.html');
+})
+// 웹소켓 /model 폴더 root 로 설정
 
 // 웹소켓 접속시 최초 이벤트
 wss.on('connection', (ws) => {
@@ -95,9 +107,9 @@ wss.on('connection', (ws) => {
   });
 });
 
-app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/index.html');
-});
+// app.get('/', (req, res) => {
+//   res.sendFile(__dirname + '/index.html');
+// });
 
 server.listen(8989, () => {
   console.log('listening on *:8989');

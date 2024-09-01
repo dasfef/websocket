@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>YOLO Object Detection PROJECT</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <!-- <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script> -->
+    <!-- <script src="https://cdn.roboflow.com/0.2.26/roboflow.js"></script> -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/onnxjs/dist/onnx.min.js"></script> -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script> -->
+    <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/ndarray/1.0.19/ndarray.js"></script> -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/ndarray-ops@1.2.2/ndarray-ops.min.js"></script> -->
+</head>
+<body>
+
+    <div id="streaming-container">
+        <img id="streaming" width="640" height="480"/>
+        <canvas id="canvas" width="640" height="480"></canvas>
+        <button id="capture">Start Capture</button>
+    </div>
+
+    <script>
+        var ws = new WebSocket('ws://woong.ddns.net:8800');
+
+        const imgsz = 416;                                              // 모델 설정 사이즈
+        const rawWidth = 640;
+        const rawHeight = 480;
+        const modelPath = 'http://woong.ddns.net:8800/models/model.json';
+
+        var currentBlobUrl = null;                                      // 현재 Blob URL 저장
+        var streamingImage = document.querySelector('#streaming');      // jQuery select id: streaming 
+        let captureBtn = document.querySelector('#capture');            // captureBtn 변수 선언
+        let captureFlag = false;                                        // captureBtn 토글 변수
+
+        // YOLO Model classes
+        const classes = [
+            'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
+            'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse',
+            'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase',
+            'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard',
+            'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+            'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant',
+            'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven',
+            'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
+        ];
+
+        const scoreThreshold = 0.5;
+        
+
+        // let onnxModelPath = 'http://woong.ddns.net:8800/models/yolov8n.onnx';               // model session 경로
+        // const red = [], green = [], blue = [];                          // 이미지 RGB 파악 후 배열 삽입
+
+        // 모델별 input 확인하고 변경 필요
+        // const inputName = "images";
+        // let session;
+
+        ws.binaryType = 'arraybuffer';                                  // 받는 데이터 형식을 arraybuffer로 설정
+        
+        //  *** 캡쳐 버튼 토글 효과 및 웹소켓 특정 메시지 전송 ***
+        captureBtn.addEventListener('click', () => {
+            captureFlag = !captureFlag;                                 // 토글 형식 변환
+            captureBtn.textContent = captureFlag ? 'Stop Capture' : 'Start Capture';        // 캡쳐 버튼 텍스트 설정
+            console.log(`Capture Activate: ${captureFlag}`);
+            
+            let message = captureFlag ? 'start' : 'stop';               // 웹소켓 전송(captureFlag True -> START / captureFlag False -> STOP)
+            ws.send(`${message}`);
+            console.log(`Sending CaptureFlag Data: ${message}`);
+        });
+
+        // async function detectObject(blob) {
+        //     const image = await tf.browser.fromPixelsAsync(blob);
+        //     console.log('image: ', image);
+        //     const resizedImage = tf.image.resizeBilinear(image, [imgsz, imgsz]).div(255);
+        //     console.log('resizedImage: ', resizedImage);
+        //     const batchedImage = resizedImage.expandDims(0);
+        //     console.log('batchedImage: ', batchedImage);
+            
+        //     const predictions = await model.execute(batchedImage);
+        //     if(!predictions || predictions.length === 0) {
+        //         console.log("No predictions from the model.");
+        //         return;
+        //     }
+
+        //     console.log('predictions: ', predictions);      // 1, 84, 3549
+            
+        //     // const transposedImage = predictions.transpose([0, 3, 1, 2]);
+        //     // console.log('transposedImage: ',transposedImage);
+            
+        //     const boxes = await predictions[0].arraySync();
+        //     const scores = await predictions[1].array();
+        //     const classes = await predictions[2].array();
+
+        //     for (let i=0; i<boxes.length; i++){
+        //         for (let j=0; j<boxes[i].length; j++){
+        //             const currBox = boxes[i][j];
+        //             const [y, x, height, width] = [currBox[0], currBox[1], currBox[2] - currBox[0], currBox[3] - currBox[1]];
+        //             if (scores[i][j] > scoreThreshold) {
+        //                 drawBoundingBox([x, y, width, height], scores[i][j], classes[i][j]);
+        //             }
+        //         }
+        //     }
+        // }
+
+        // 서버에서 바이너리 데이터 받을때마다 실행
+        ws.onmessage = async function (event){
+            if(currentBlobUrl) {
+                URL.revokeObjectURL(currentBlobUrl);                    
+            }
+                
+            // 서버로부터 받은 데이터를 blob 객체로 변환, 이를 이미지로 표시
+            var blob = new Blob([event.data], {type: 'image/jpeg'});
+            currentBlobUrl = URL.createObjectURL(blob);                 // Blob 객체로 나타내기
+            streamingImage.src = currentBlobUrl;
+
+            let rgbData = new Uint8ClampedArray(event.data);
+            let rgbAlphaData = new Uint8ClampedArray(rawWidth * rawHeight * 4);
+            for (let i = 0; i < rgbData.length / 3; i++){
+                rgbAlphaData[i * 4] = rgbData[i * 3];                   // R channel
+                rgbAlphaData[i * 4 + 1] = rgbData[i * 3 + 1];           // G channel
+                rgbAlphaData[i * 4 + 2] = rgbData[i * 3 + 2];           // B channel
+                rgbAlphaData[i * 4 + 3] = 255;                          // A channel
+            }
+
+            const imageData = new ImageData(rgbAlphaData, rawWidth, rawHeight);
+            const model = await tf.loadGraphModel(modelPath);
+            detectObject(imageData, model);
+            // createImageBitmap(blob).then(async function(imageBitmap) {
+            //     const canvas = document.createElement('canvas');
+            //     canvas.width = imageBitmap.width;
+            //     canvas.height = imageBitmap.height;
+            //     const ctx = canvas.getContext('2d');
+            //     ctx.drawImage(imageBitmap, 0, 0, imageBitmap.width, imageBitmap.height);
+            //     const image = tf.browser.fromPixels(canvas);
+                
+            //     detectObject(image);
+            // })
+
+
+            // RGB에 알파채널 추가
+            // let rgbData = new Uint8ClampedArray(event.data);
+            // let rgbAlphaData = new Uint8ClampedArray(rawWidth * rawHeight * 4);
+            // for (let i=0; i<rgbData.length / 3; i++){
+            //     rgbAlphaData[i * 4] = rgbData[i * 3];                   // R 채널
+            //     rgbAlphaData[i * 4 + 1] = rgbData[i * 3 + 1];           // G 채널
+            //     rgbAlphaData[i * 4 + 2] = rgbData[i * 3 + 2];           // B 채널
+            //     rgbAlphaData[i * 4 + 3] = 255;                          // A 채널
+            // }
+            
+            // console.log('rgb: ',rgbAlphaData);
+            // console.log('rgb length: ',rgbAlphaData.length);
+            // const imageData = new ImageData(rgbAlphaData, rawWidth, rawHeight);         // 이미지 데이터 선언
+            // console.log(imageData);
+            // detectObject(imageData);
+        };
+        
+        ws.onopen = function(event) {
+            console.log('Connected to WebSocket server');
+        };
+        
+        ws.onerror = function(error) {
+            console.log('WebSocket error: ' + error);
+        };
+        
+        ws.onclose = function(event) {
+            if(event.wasClean){
+                console.log('Connection closed clearly, code=${event.code} reason=${event.reason}');
+            } else {
+                console.log('Connection died');
+            }
+        };
+        
+        window.addEventListener('beforeunload', function() {
+            if(ws) {
+                ws.close();
+            }
+            if(currentBlobUrl) {
+                URL.revokeObjectURL(currentBlobUrl);
+            }
+        });
+
+        async function drawBoundingBox(canvas, ctx, prediction, width, height) {
+            // Get the bounding box information
+            const [x, y, boxWidth, boxHeight] = prediction.box;
+            const [top, left, bottom, right] = [y, x, boxHeight, boxWidth];
+
+            // Draw the bounding box
+            ctx.strokeStyle = '#00FFFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(left * width, top * height, (right - left) * width, (bottom - top) * height);
+
+            // Add the label
+            ctx.fillStyle = '#00FFFF';
+            const textWidth = ctx.measureText(prediction.class).width;
+            const textHeight = parseInt(ctx.font, 10); // base 10
+            ctx.fillRect(left * width, top * height, textWidth + 4, textHeight + 4);
+            ctx.fillStyle = '#000000';
+            ctx.fillText(prediction.class, left * width, top * height);
+        }
+
+        async function detectObject(imageData, model) {
+            const predictions = await tf.tidy(() => {
+                const pixels = tf.browser.fromPixels(imageData);
+                const resized = tf.image.resizeBilinear(pixels, [416, 416]);
+                const batched = resized.reshape([1, 416, 416, 3]);
+                // const transposed = batched.transpose([0, 3, 1, 2]);
+    
+                // Run the image through the model
+                console.log('Model executing');
+                return model.execute(batched);
+
+            });
+            // Preprocess the image
+            const predictionsArray = await predictions.array();
+
+            // Get the canvas context
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            console.log('drawing boundingbox');
+            console.log('predictions: ', predictions);
+            console.log('predictions length: ', predictions.shape);
+            console.log('predictions Array: ', predictions.array());
+            // Draw the bounding box for each detected object
+            for (let i = 0; i < predictionsArray.length; i++) {
+                await drawBoundingBox(canvas, ctx, predictionsArray[i], imageData.width, imageData.height);
+            }
+        }
+
+        
+
+        
+
+        
+        // Model 로드
+        // async function loadModel() {
+        //     model = await tf.loadGraphModel('http://woong.ddns.net:8800/models/model.json');
+        //     console.log('YOLO model successfully loaded');
+        // }
+
+        // loadModel();
+
+        // 바운딩 박스 그리기
+        // function drawBoundingBoxes(boxes, scores, classIdx) {
+        //     let canvas = document.getElementById('canvas');                       // 캔버스 선언
+        //     let context = canvas.getContext('2d');                              // 캔버스 context
+
+        //     context.clearRect(0, 0, canvas.width, canvas.height);               // 내용물 지우기(다음 이미지 부를때마다)
+            
+        //     // 박스 그리기
+        //     context.beginPath();
+        //     context.rect(box[0], box[1], box[2], box[3]);
+        //     context.lineWidth = 3;
+        //     context.strokeStyle = 'red';
+        //     context.fillStyle = 'red';
+        //     context.stroke();
+
+        //     context.fillText(
+        //         `${classes[classIdx]} : ${score}`,
+        //         box[0],
+        //         box[1] > 10 ? box[1] - 5 : 10
+        //     );
+        // }
+
+
+
+
+
+
+
+
+
+        // YOLO model 객체 탐지
+        // async function detectObject(blob) {
+        //     const image = await tf.browser.fromPixelsAsync(blob);
+        //     const resizedImage = tf.image.resizeBilinear(image, [imgsz, imgsz]).div(255);
+        //     const batchedImage = resizedImage.expandDims(0);
+
+        //     const predictions = await model.executeAsync(batchedImage);
+
+        //     const boxes = await predictions[0].array();
+        //     const scores = await predictions[1].array();
+        //     const classes = await predictions[2].array();
+
+        //     for (let i=0; i<boxes.length; i++){
+        //         for (let j=0; j<boxes[i].length; j++){
+        //             const currBox = boxes[i][j];
+        //             const [y, x, height, width] = [currBox[0], currBox[1], currBox[2] - currBox[0], currBox[3] - currBox[1]];
+        //             if (scores[i][j] > scoreThreshold) {
+        //                 drawBoundingBox([x, y, width, height], scores[i][j], classes[i][j]);
+        //             }
+        //         }
+        //     }
+            // Preprocess Image
+            // let tfImg = tf.browser.fromPixels(imageData).toFloat();
+            // let smallImg = tf.image.resizeBilinear(tfImg, [imgsz, imgsz]);
+            // smallImg = smallImg.expandDims(0);
+            // const output = await model.execute(smallImg);
+
+            // console.log(output.arraySync());
+
+            // const boxes = output[0].arraySync();
+            // const scores = output[1].arraySync();
+            // const classes = output[2].arraySync();
+            // const validDetections = output[3].dataSync()[0];
+
+            // const threshold = 0.5;
+
+            // const predictions = [];
+
+            // for (let i=0; i<validDetections; i++) {
+            //     if(scores[i] > threshold) {
+            //         const currBox = boxes[i];
+            //         const [top, left, bottom, right] = currBox;
+            //         const currClass = classes[i];
+            //         predictions.push({top, left, bottom, right, class: currClass, score: scores[i]});
+            //     }
+            // }
+
+            // drawBoundingBoxes(predictions);
+            // Make prediction
+            // console.log(predictions);
+            // let boxes = predictions[4].dataSync();
+            // boxes = boxes[4];
+            // let scores = predictions.arraySync()[1];
+            // let classes = predictions.arraySync()[2];
+            // console.log('boxes: ',boxes);
+            // console.log('scores: ',scores);
+            // console.log('classes: ',classes);
+            // boxes = boxes.filter(box => box[4] > 0.5);
+            // drawBoundingBoxes(boxes);
+        // }
+
+        // // *** 이미지 전처리 ***
+        // async function preprocessImage(buf) {
+        //     console.log("Called preprocessImage");
+        //     return new Promise(resolve => {
+        //         const img = new Image();
+        //         img.src = URL.createObjectURL(buf);
+        //         img.onload = () => {
+        //             const [img_width, img_height] = [img.width, img.height]
+        //             const canvas = document.createElement("canvas");
+        //             canvas.width = imgsz;
+        //             canvas.height = imgsz;
+        //             const context = canvas.getContext('2d');
+        //             context.drawImage(img, 0, 0, imgsz, imgsz);
+        //             const imgData = context.getImageData(0, 0, imgsz, imgsz);
+        //             // pixels : uint8clampedArray(692224)
+        //             const pixels = imgData.data;                                
+
+        //             for(let i=0; i<pixels.length; i+=4){
+        //                 red.push(pixels[i]/255.0);
+        //                 green.push(pixels[i+1]/255.0);
+        //                 blue.push(pixels[i+2]/255.0);
+        //             }
+        //             const input = [...red, ...green, ...blue];
+        //             resolve([input, img_width, img_height]);
+        //         }
+        //     });
+        // }
+
+        // // ==== iou -> union -> intersection ====
+        // function iou(box1, box2) {
+        //     return intersection(box1, box2) / union(box1, box2);
+        // }
+
+        // function union(box1,box2) {
+        //     const [box1_x1,box1_y1,box1_x2,box1_y2] = box1;
+        //     const [box2_x1,box2_y1,box2_x2,box2_y2] = box2;
+        //     const box1_area = (box1_x2-box1_x1)*(box1_y2-box1_y1)
+        //     const box2_area = (box2_x2-box2_x1)*(box2_y2-box2_y1)
+        //     return box1_area + box2_area - intersection(box1,box2)
+        // }
+
+        // function intersection(box1,box2) {
+        //     const [box1_x1,box1_y1,box1_x2,box1_y2] = box1;
+        //     const [box2_x1,box2_y1,box2_x2,box2_y2] = box2;
+        //     const x1 = Math.max(box1_x1,box2_x1);
+        //     const y1 = Math.max(box1_y1,box2_y1);
+        //     const x2 = Math.min(box1_x2,box2_x2);
+        //     const y2 = Math.min(box1_y2,box2_y2);
+        //     return (x2-x1)*(y2-y1)
+        // }
+        // // ======================================
+
+        
+
+        // // Output 탐지
+        // function outPut(output, img_width, img_height) {
+        //     let boxes = [];
+        //     for (let index=0; index<8400; index++){
+        //         const [class_id, prob] = [...Array(80).keys()]
+        //             .map(col => [col, output[8400 * (col+4) + index]])
+        //             .reduct((accum, item) => item[1] > accum[1] ? item : accum, [0, 0]);
+        //         if (prob < 0.5){
+        //             continue;
+        //         }
+        //         const label = yolo_classes[class_id];
+        //         const xc = output[index];
+        //         const yc = output[8400 + index];
+        //         const w = output[2 * 8400 + index];
+        //         const h = output[3 * 8400 + index];
+        //         const x1 = (xc-w/2)/imgsz * img_width;
+        //         const y1 = (yc-h/2)/imgsz * img_height;
+        //         const x2 = (xc+w/2)/imgsz * img_width;
+        //         const y2 = (yc+h/2)/imgsz * img_height;
+        //         boxes.push([x1, y1, x2, y2, label, prob]);
+        //     }
+
+        //     boxes = boxes.sort((box1,box2) => box2[5] - box1[5]) 
+        //     const result = [];
+        //     while(boxes.length > 0) {
+        //         result.push(boxes[0]);
+        //         boxes = boxes.filter(box => iou(boxes[0], box) < 0.7);
+        //     }
+        //     return result;
+        // }
+
+        // // 모델 실행
+        // async function run_model(input) {
+        //     const model = await ort.InferenceSession.create(onnxModelPath);
+            
+        //     input = new ort.Tensor('float32', input, [1, 3, imgsz, imgsz]);
+        //     console.log("Model loaded successfully");
+        //     const outputs = await model.run({inputName:input});
+        //     return outputs["output0"].data;
+        // }
+
+        // // 과정 함축 함수
+        // async function detect(buf){
+        //     const [input, img_width, img_height] = await preprocessImage(buf);
+        //     // console.log(input);
+        //     console.log("Model processing detect");
+        //     const output = await run_model(input);
+        //     return outPut(output, img_width, img_height);
+        // }
+
+        // // 영상 바이너리데이터 전달
+        // async function linkedData(event) {
+        //     if(currentBlobUrl) {
+        //         URL.revokeObjectURL(currentBlobUrl);                    
+        //     }
+                
+        //     // 서버로부터 받은 데이터를 blob 객체로 변환, 이를 이미지로 표시
+        //     var blob = new Blob([event.data], {type: 'image/jpeg'});
+        //     currentBlobUrl = URL.createObjectURL(blob);                 // Blob 객체로 나타내기
+        //     streamingImage.src = currentBlobUrl;
+        //     console.log("Streaming...");
+
+        //     let img = new Image();  // HTMLImageElement 객체를 만들기
+        //     img.onload = function() {
+        //         console.log("Start to draw new canvas");
+        //         let canvas = document.createElement('canvas');
+        //         canvas.width = this.width;  // this는 img를 가리킴
+        //         canvas.height = this.height;  // this는 img를 가리킴
+        //         let ctx = canvas.getContext('2d');
+        //         ctx.drawImage(this, 0, 0);
+        //         let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        //         // Ensure detect function is implemented and works correctly
+        //         let inputTensor;
+        //         try {
+        //             inputTensor = detect(blob);
+        //         } catch(e) {
+        //             console.error("Error in detect function: ", e);
+        //             return;
+        //         }
+
+        //         // Ensure drawBoxes function is implemented and works correctly
+        //         try {
+        //             drawBoxes(blob, inputTensor);
+        //         } catch(e) {
+        //             console.error("Error in drawBoxes function: ", e);
+        //             return;
+        //         }
+        //     }
+
+        //             img.src = currentBlobUrl;  // 이미지 소스를 blob URL로 설정
+        //     // const results = await detect(blob);
+        // }
+
+        // function drawBoundingBoxes(predictions) {
+        //     const canvas = document.querySelector('#canvas');
+        //     const ctx = canvas.getContext('2d');
+        //     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        //     for (let i=0; i<predictions.length; i++){
+        //         const pred = predictions[i];
+        //         const [x, y, width, height] = pred.box;
+
+
+        //     }
+        // }
+
+        // function drawBoxes(file, boxes) {
+        //   const img = new Image()
+        //   img.src = URL.createObjectURL(file);
+        //   img.onload = () => {
+        //       const canvas = document.querySelector("canvas");
+        //       canvas.width = img.width;
+        //       canvas.height = img.height;
+        //       const ctx = canvas.getContext("2d");
+        //       ctx.drawImage(img,0,0);
+        //       ctx.strokeStyle = "#00FF00";
+        //       ctx.lineWidth = 3;
+        //       ctx.font = "18px serif";
+        //       boxes.forEach(([x1,y1,x2,y2,label]) => {
+        //           ctx.strokeRect(x1,y1,x2-x1,y2-y1);
+        //           ctx.fillStyle = "#00ff00";
+        //           const width = ctx.measureText(label).width;
+        //           ctx.fillRect(x1,y1,width+10,25);
+        //           ctx.fillStyle = "#000000";
+        //           ctx.fillText(label, x1, y1+18);
+        //       });
+        //   }
+        // }
+    </script>
+</body>
+</html>

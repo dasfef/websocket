@@ -1,2 +1,2 @@
-#define SSID1 "chois"
-#define PWD1 "gydnjs*087"
+#define SSID1 "xpi"
+#define PWD1 "smartiot"

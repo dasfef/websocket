@@ -19,8 +19,8 @@
 #include "home_wifi_multi.h"
 
 //정적 ip 할당
-IPAddress staticIP(172, 30, 1, 30);
-IPAddress gateway(172, 30, 1, 254);
+IPAddress staticIP(192, 168, 100, 30);
+IPAddress gateway(192, 168, 100, 1);
 IPAddress subnet(255, 255, 255, 0);
 
 //카메라 모듈 이름
@@ -484,7 +484,7 @@ void setup()
   Serial.println("/mstream");
 
   // 웹소켓 경로 지정
-  webSocket.begin("222.116.198.124", 8800);
+  webSocket.begin("192.168.0.8", 8800);
   webSocket.onEvent(webSocketEvent);
 
   // 카메라 구성
